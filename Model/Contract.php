@@ -7,7 +7,6 @@ use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\MorphMany;
 
-
 class Contract extends Model {
 
     protected $table = 'l_contract_work_contracts';
@@ -24,10 +23,6 @@ class Contract extends Model {
 
     public function companyType():BelongsTo{
         return $this->belongsTo(ContractType::class, 'contract_id', 'id');
-    }
-
-    public function contractDirection():BelongsTo{
-        return $this->belongsTo(ContractDirection::class, 'contract_id', 'id');
     }
 
     public function contrAgent():BelongsTo{

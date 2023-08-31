@@ -11,7 +11,7 @@ class CreateLContractWorkContracts extends Migration {
             $table->string('status');
             $table->integer('contract_type_id');
             $table->integer('organization_id');
-            $table->integer('contract_direction_id');
+            $table->integer('department_id');
             $table->integer('contragent_id');
             $table->integer('company_type_id');
             $table->integer('responsible_id');

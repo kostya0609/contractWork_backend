@@ -52,6 +52,8 @@ class SelectNotification{
                 break;
             }
             case 'transfer_originals_to_lawyer':{
+                Notification::send($responsible_id, $contract_id, $status, 'lawyer' );
+
                 SetNeedAction::update($contract_id, $lawyer_ids);
                 foreach ($lawyer_ids as $lawyer)
                     Notification::send($lawyer, $contract_id, $status, 'lawyer' );

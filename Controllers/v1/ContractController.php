@@ -17,7 +17,6 @@ use App\Modules\ContractWork\Model\Organization;
 use App\Modules\ContractWork\Model\CompanyType;
 use App\Modules\ContractWork\Model\Contract;
 use App\Modules\ContractWork\Model\NeedAction;
-use App\Modules\ContractWork\Model\ContractDirection;
 use App\Modules\ContractWork\Model\ContractType;
 use App\Modules\ContractWork\Model\File;
 use App\Modules\ContractWork\Model\Log;
@@ -32,6 +31,20 @@ use Illuminate\Support\Facades\Validator;
 use Illuminate\Validation\Rule;
 
 class ContractController extends Controller{
+    const   FILE_TYPES = [
+            'contract'  => 'contract_file',
+            'addition'  => 'addition_file',
+            'annex'     => 'annex_file',
+            'note'      => 'note_file',
+            'info'      => 'info_file',
+            'about'     => 'about_file',
+            'extract'   => 'extract_file',
+            'report'    => 'report_file',
+            'agree'     => 'agree_file',
+            'vicarious' => 'vicarious_file',
+            'form'      => 'form_file'
+        ];
+
     public function validation($data){
         $validation = Validator::make($data->all(),
             [
@@ -39,13 +52,11 @@ class ContractController extends Controller{
 
                 'contract_type_id'      => 'required | numeric',
                 'organization_id'       => 'required | numeric',
-                'contract_direction_id' => 'required | numeric',
+                'department_id'         => 'required | numeric',
                 'contragent_id'         => 'required | numeric',
                 'company_type_id'       => 'required | numeric',
 
                 'responsible_id'        => 'required | numeric',
-                'recording_id'          => 'required | numeric',
-                'looker_ids'            => 'required | array',
                 'signatory_id'          => 'required | numeric',
 
                 'content'               => 'required',
@@ -55,13 +66,12 @@ class ContractController extends Controller{
 
                 'contract_type_id.required'      => 'Поле "Тип договора" обязательно!',
                 'organization_id.required'       => 'Поле "Организация" обязательно!',
-                'contract_direction_id.required' => 'Поле "Направление" обязательно!',
+                'department_id.required'         => 'Поле "Департамент" обязательно!',
                 'contragent_id.required'         => 'Поле "Контрагент" обязательно!',
                 'company_type_id.required'       => 'Поле "Вид правовой собственности" обязательно!',
 
                 'responsible_id.required'        => 'Поле "Инициатор" обязательно!',
                 'recording_id.required'          => 'Поле "Регистратор" обязательно!',
-                'looker_ids.required'            => 'Поле "Наблюдатели" обязательно!',
                 'signatory_id.required'          => 'Поле "Подписант" обязательно!',
 
                 'content.required'               => 'Поле "Содержание документа" обязательно!',
@@ -81,22 +91,11 @@ class ContractController extends Controller{
                 'message'   => implode(' <br/> ', $validation->errors()->all()),
             ]);
 
-        if(count($data['looker_ids']) == 0)
-            return response()->json([
-                'success'    => false,
-                'message'   => 'Поле "Наблюдатели" обязательно!',
-            ]);
 
-        if(!isset($request->main_files) || !isset($request->main_files['file']) || count($request->main_files['file']) == 0)
+        if(!isset($request->contract_file))
             return response()->json([
                 'success' => false,
-                'message' => 'Возникла ошибка, нет основных файлов договора!',
-            ]);
-
-        if(!isset($request->comment_files) || !isset($request->comment_files['file']) || count($request->comment_files['file']) == 0)
-            return response()->json([
-                'success' => false,
-                'message' => 'Возникла ошибка, нет файлов комментариев договора!',
+                'message' => 'Возникла ошибка, нет файла договора!',
             ]);
 
         DB::beginTransaction();
@@ -106,14 +105,16 @@ class ContractController extends Controller{
             $newContract           = ContractAction::setContract($newContract, $data);
             $contract_id           = $newContract->id;
 
-            foreach ($request->main_files['file'] as $item){
+            foreach (self::FILE_TYPES as $key => $value){
                 $newFile = new File();
-                FileAction::saveFile($newFile, $contract_id, Contract::class, 'Main', $item, 'main');
+                FileAction::saveFile($newFile, $contract_id, Contract::class, ucfirst($key), $request[$value], $key);
             }
 
-            foreach ($request->comment_files['file'] as $item){
-                $newFile = new File();
-                FileAction::saveFile($newFile, $contract_id, Contract::class, 'Comment', $item, 'comment');
+            if(isset($request->others_file) && count($request->others_file) > 0){
+                foreach ($request->others_file as $item){
+                    $newFile = new File();
+                    FileAction::saveFile($newFile, $contract_id, Contract::class, 'Others', $item, 'others');
+                }
             }
 
             $log = new Log();
@@ -223,6 +224,8 @@ class ContractController extends Controller{
 
         $contragent = ContrAgent::find($contractModel->contragent_id)->name;
 
+        $department = Verifications::userDepartment($contractModel->responsible_id);
+
         $looker_ids = $contractModel->lookers->map(function($looker){
             return
                $looker->ID;
@@ -236,29 +239,20 @@ class ContractController extends Controller{
 
         $organization = Organization::find($contractModel->organization_id)->name;
 
-        $recording    = User::find($contractModel->recording_id)->full_name;
-
         $responsible  = User::find($contractModel->responsible_id)->full_name;
 
         $signatory    = User::find($contractModel->signatory_id)->full_name;
 
-        $main_files     = [];
-        $comment_files  = [];
-
-        foreach ($contractModel->files as $file){
-            if($file['type'] === 'main')    $main_files []    = ['id' => $file['id'], 'name' => $file['original_name'], 'type' => $file['type_file']];
-            if($file['type'] === 'comment') $comment_files [] = ['id' => $file['id'], 'name' => $file['original_name'], 'type' => $file['type_file']];
-        };
+        $files = ContractAction::getContractFile($contractModel->files, 'file');
 
         $contract_data = [
             'company_type_id'       => $contractModel->company_type_id,
             'content'               => $contractModel->content,
-            'contract_direction_id' => $contractModel->contract_direction_id,
+            'department_id'         => $contractModel->department_id,
             'contract_type_id'      => $contractModel->contract_type_id,
             'contragent_id'         => $contractModel->contragent_id,
             'looker_ids'            => $looker_ids,
             'organization_id'       => $contractModel->organization_id,
-            'recording_id'          => $contractModel->recording_id,
             'responsible_id'        => $contractModel->responsible_id,
             'signatory_id'          => $contractModel->signatory_id,
             'status'                => $contractModel->status,
@@ -269,9 +263,9 @@ class ContractController extends Controller{
             'contragent_list'   => [['value' => $contractModel->contragent_id,'label' => $contragent]],
             'lookers_list'      => $lookers_list,
             'organization_list' => [['value' => $contractModel->organization_id,'label' => $organization]],
-            'recording_list'    => [['value' => $contractModel->recording_id,'label' => $recording]],
             'responsible_list'  => [['value' => $contractModel->responsible_id, 'label' => $responsible]],
             'signatory_list'    => [['value' => $contractModel->signatory_id, 'label' => $signatory]],
+            'department_list'   => [['value' => $department->ID, 'label' => $department->NAME]],
         ];
 
         return response()->json([
@@ -280,8 +274,22 @@ class ContractController extends Controller{
                 'contract_data' => $contract_data,
                 'options'       => $options,
                 'files'         => [
-                    'main_files'    => $main_files,
-                    'comment_files' => $comment_files,
+                    'left'  => [
+                        'contract'  => $files['contract_file'],
+                        'addition'  => $files['addition_file'],
+                        'annex'     => $files['annex_file'],
+                        'others'    => $files['others_file'],
+                    ],
+                    'right' => [
+                        'note'      => $files['note_file'],
+                        'info'      => $files['info_file'],
+                        'about'     => $files['about_file'],
+                        'extract'   => $files['extract_file'],
+                        'report'    => $files['report_file'],
+                        'agree'     => $files['agree_file'],
+                        'vicarious' => $files['vicarious_file'],
+                        'form'      => $files['form_file'],
+                    ],
                 ],
             ],
         ]);
@@ -304,40 +312,16 @@ class ContractController extends Controller{
                 'message'   => implode(' <br/> ', $validation->errors()->all()),
             ]);
 
-        if(count($data['looker_ids']) == 0)
-            return response()->json([
-                'success'    => false,
-                'message'   => 'Поле "Наблюдатели" обязательно!',
-            ]);
-
-        $is_main_file      = false;
-        $is_main_file_save = false;
-
-        if(isset($request->main_files)){
-            if( isset($request->main_files['file'])      && count($request->main_files['file'])      > 0 ) $is_main_file      = true;
-            if( isset($request->main_files['file_save']) && count($request->main_files['file_save']) > 0 ) $is_main_file_save = true;
-        }
-
-        if(!$is_main_file && !$is_main_file_save)
+        if(!isset($request->contract_file) && !isset($request->contract_file_id) )
             return response()->json([
                 'success' => false,
-                'message' => 'Возникла ошибка, нет основных файлов договора!',
+                'message' => 'Возникла ошибка, нет файла договора!',
             ]);
 
-        $is_comment_file      = false;
-        $is_comment_file_save = false;
-
-        if(isset($request->comment_files)){
-            if( isset($request->comment_files['file'])      && count($request->comment_files['file'])      > 0 ) $is_comment_file      = true;
-            if( isset($request->comment_files['file_save']) && count($request->comment_files['file_save']) > 0 ) $is_comment_file_save = true;
-        }
-
-        if(!$is_comment_file && !$is_comment_file_save)
-            return response()->json([
-                'success' => false,
-                'message' => 'Возникла ошибка, нет файлов комментариев договора!',
-            ]);
-
+        $others_file    = [
+            'file_save' => $request->others_file_id ? $request->others_file_id : null,
+            'file'      => $request->others_file    ? $request->others_file    : null,
+        ];
 
         DB::beginTransaction();
         try {
@@ -346,9 +330,15 @@ class ContractController extends Controller{
 
             ContractAction::setContract($contractModel, $data);
 
-            FileAction::updateFile($contract_id,Contract::class,'Main', $request->main_files, 'main');
+            foreach (self::FILE_TYPES as $key => $value){
+                $files  = [
+                    'file_save' => $request[$value.'_id'] ? [$request[$value.'_id']] : null,
+                    'file'      => $request[$value]       ? [$request[$value]]       : null,
+                ];
+                FileAction::updateFile($contract_id,Contract::class, ucfirst($key), $files, $key);
+            }
 
-            FileAction::updateFile($contract_id,Contract::class,'Comment', $request->comment_files, 'comment');
+            FileAction::updateFile($contract_id,Contract::class,'Others', $others_file, 'others');
 
             $log = new Log();
             $logMessage = 'Изменения в договоре сохранены';
@@ -417,10 +407,10 @@ class ContractController extends Controller{
 
         DB::beginTransaction();
         try{
+            foreach (self::FILE_TYPES as $key => $value)
+                FileAction::deleteFiles($contract_id,Contract::class, $key);
 
-            FileAction::deleteFiles($contract_id,Contract::class, 'main');
-
-            FileAction::deleteFiles($contract_id,Contract::class, 'comment');
+            FileAction::deleteFiles($contract_id,Contract::class, 'others');
 
             $contractModel->lookers()->sync([]);
 
@@ -540,14 +530,12 @@ class ContractController extends Controller{
 
         $companyTypes       = CompanyType::get();
         $contractTypes      = ContractType::get();
-        $contractDirections = ContractDirection::get();
 
         return response()->json([
             'success' => true,
             'data'    => [
                 'companyTypes'       => $companyTypes,
                 'contractTypes'      => $contractTypes,
-                'contractDirections' => $contractDirections,
                 'responsible_list'   => ['value' => $user_id, 'label' => $responsible],
             ],
         ]);
@@ -584,19 +572,6 @@ class ContractController extends Controller{
         ]);
     }
 
-    public function getContractDirection(){
-        $contractDirections = ContractDirection::get();
-
-        return response()->json([
-            'success' => true,
-            'data'    => $contractDirections->map(function ($el){
-                return [
-                    'value' => $el->id,
-                    'label' => $el->derection,
-                ];
-            }),
-        ]);
-    }
 }
 
 
